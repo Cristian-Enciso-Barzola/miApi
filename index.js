@@ -1,84 +1,186 @@
+
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const sequelize = require('./config/db');
 
-// Importar Modelos para que Sequelize los registre
 const Producto = require('./models/Producto');
+const Categoria = require('./models/Categoria');
+
+// RELACIONES ENTRE MODELOS
+Categoria.hasMany(Producto, {
+    foreignKey: 'categoriaId',
+    as: 'productos'
+});
+
+Producto.belongsTo(Categoria, {
+    foreignKey: 'categoriaId',
+    as: 'categoria'
+});
 
 const app = express();
 
-// --- MIDDLEWARES ---
-// Habilitar CORS para permitir peticiones desde el frontend (React)
 app.use(cors());
-// Parsear el body de las peticiones a JSON
 app.use(express.json());
 
-// --- RUTAS BÁSICAS DE PRUEBA ---
+// RUTA DE PRUEBA
 app.get('/', (req, res) => {
-  res.send('¡API Backend funcionando exitosamente!');
+    res.send('¡API Backend funcionando exitosamente!');
 });
 
+
 // ==========================================
-// --- RUTAS CRUD PARA PRODUCTOS (AQUÍ VAN) ---
+// CRUD DE CATEGORIAS
 // ==========================================
 
-// 1. POST: Crear un nuevo producto (Hace funcionar el botón Guardar)
+// LISTAR CATEGORIAS
+app.get('/categorias', async (req, res) => {
+    try {
+        const categorias = await Categoria.findAll();
+        res.json(categorias);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// CREAR CATEGORIA
+app.post('/categorias', async (req, res) => {
+    try {
+        const nuevaCategoria = await Categoria.create(req.body);
+
+        res.status(201).json({
+            message: 'Categoria creada correctamente',
+            categoria: nuevaCategoria
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ACTUALIZAR CATEGORIA
+app.put('/categorias/:id', async (req, res) => {
+    try {
+        const [actualizados] = await Categoria.update(req.body, {
+            where: { id: req.params.id }
+        });
+
+        if (actualizados === 0) {
+            return res.status(404).json({
+                message: 'Categoria no encontrada'
+            });
+        }
+
+        res.json({
+            message: 'Categoria actualizada correctamente'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ELIMINAR CATEGORIA
+app.delete('/categorias/:id', async (req, res) => {
+    try {
+        const eliminados = await Categoria.destroy({
+            where: { id: req.params.id }
+        });
+
+        if (eliminados === 0) {
+            return res.status(404).json({
+                message: 'Categoria no encontrada'
+            });
+        }
+
+        res.json({
+            message: 'Categoria eliminada correctamente'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+// CREAR PRODUCTO
 app.post('/productos', async (req, res) => {
-  try {
-    const nuevoProducto = await Producto.create(req.body);
-    res.json(nuevoProducto);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        const nuevoProducto = await Producto.create(req.body);
+        res.status(201).json(nuevoProducto);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// 2. GET: Obtener todos los productos (Hace funcionar la Lista de Productos)
+// LISTAR PRODUCTOS CON SU CATEGORIA
 app.get('/productos', async (req, res) => {
-  try {
-    const productos = await Producto.findAll();
-    res.json(productos);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        const productos = await Producto.findAll({
+            include: [{
+                model: Categoria,
+                as: 'categoria'
+            }]
+        });
+
+        res.json(productos);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// 3. PUT: Actualizar un producto existente (Hace funcionar el botón Editar)
+// ACTUALIZAR PRODUCTO
 app.put('/productos/:id', async (req, res) => {
-  try {
-    await Producto.update(req.body, {
-      where: { id: req.params.id }
-    });
-    res.json({ message: 'Producto actualizado' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        const [actualizados] = await Producto.update(req.body, {
+            where: { id: req.params.id }
+        });
+
+        if (actualizados === 0) {
+            return res.status(404).json({
+                message: 'Producto no encontrado'
+            });
+        }
+
+        res.json({ message: 'Producto actualizado' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// 4. DELETE: Eliminar un producto (Hace funcionar el botón Eliminar)
+// ELIMINAR PRODUCTO
 app.delete('/productos/:id', async (req, res) => {
-  try {
-    await Producto.destroy({
-      where: { id: req.params.id }
-    });
-    res.json({ message: 'Producto eliminado' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    try {
+        const eliminados = await Producto.destroy({
+            where: { id: req.params.id }
+        });
+
+        if (eliminados === 0) {
+            return res.status(404).json({
+                message: 'Producto no encontrado'
+            });
+        }
+
+        res.json({ message: 'Producto eliminado' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// ==========================================
-// --- SINCRONIZACIÓN Y ARRANQUE ---
+// SINCRONIZAR BASE DE DATOS
 const PORT = process.env.PORT || 3000;
 
-// force: false evita que se borren los datos cada vez que se reinicia el servidor
-sequelize.sync({ force: false })
-  .then(() => {
-    console.log('Base de datos conectada y sincronizada.');
-    app.listen(PORT, () => {
-      console.log(`Servidor corriendo en http://localhost:${PORT}`);
+sequelize.sync({ alter: true })
+    .then(() => {
+        console.log('Base de datos conectada y sincronizada.');
+
+        app.listen(PORT, () => {
+            console.log(
+                `Servidor corriendo en http://localhost:${PORT}`
+            );
+        });
+    })
+    .catch(error => {
+        console.error(
+            'Error al conectar con la base de datos:',
+            error
+        );
     });
-  })
-  .catch(error => {
-    console.error('Error al conectar con la base de datos:', error);
-  });
