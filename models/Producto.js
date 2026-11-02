@@ -22,7 +22,12 @@ const Producto = sequelize.define('Producto', {
     categoriaId: {
         type: DataTypes.INTEGER,
         allowNull: false
-    }
+    },
+
+    proveedorId: {
+    type: DataTypes.INTEGER,
+    allowNull: true
+}
 }, {
     timestamps: true
 });
