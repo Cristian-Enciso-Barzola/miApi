@@ -1,15 +1,21 @@
-
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const sequelize = require('./config/db');
 
+// Modelos
 const Producto = require('./models/Producto');
 const Categoria = require('./models/Categoria');
 const Proveedor = require('./models/Proveedor');
 const Usuario = require('./models/Usuario');
 const Movimiento = require('./models/Movimiento');
+
+// Autenticación y Seguridad
+const authRoutes = require('./routes/authRoutes');
+const autenticar = require('./middleware/authMiddleware');
 
 // RELACIONES ENTRE MODELOS
 Categoria.hasMany(Producto, {
@@ -33,19 +39,7 @@ Producto.belongsTo(Proveedor, {
     as: 'proveedor'
 });
 
-
-const app = express();
-
-app.use(cors());
-app.use(express.json());
-
-// RUTA DE PRUEBA
-app.get('/', (req, res) => {
-    res.send('¡API Backend funcionando exitosamente!');
-});
-
 // Relaciones de Movimientos
-
 Producto.hasMany(Movimiento, {
     foreignKey: 'productoId',
     as: 'movimientos'
@@ -64,6 +58,41 @@ Usuario.hasMany(Movimiento, {
 Movimiento.belongsTo(Usuario, {
     foreignKey: 'usuarioId',
     as: 'usuario'
+});
+
+const app = express();
+
+// --- PROTECCIÓN CONTRA ATAQUES COMUNES ---
+
+// 1. HELMET: Protege contra XSS y otras vulnerabilidades de cabecera HTTP
+app.use(helmet());
+
+// Habilitar CORS para permitir peticiones desde el frontend (React)
+// 2. CORS: Configuración restrictiva (reemplazar por la URL de tu React cuando esté en producción)
+// Por ahora permitimos localhost:5173 (Vite), lo cual previene peticiones de orígenes no autorizados.
+app.use(cors({
+    origin: 'http://localhost:5173',
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// 3. RATE LIMIT: Previene ataques de Fuerza Bruta y DoS limitando las peticiones por IP
+const limitador = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutos
+    max: 100, // Máximo 100 peticiones por IP en ese lapso
+    message: 'Demasiadas peticiones desde esta IP, por favor intente más tarde.'
+});
+app.use('/api/', limitador); // Aplica a todas las rutas que comiencen con /api/
+
+// Parsear el body de las peticiones a JSON (Ubicado antes de registrar las rutas para evitar req.body undefined)
+app.use(express.json());
+
+// Rutas de autenticación abiertas para todos
+app.use('/api/auth', authRoutes);
+
+// --- RUTAS BÁSICAS DE PRUEBA ---
+app.get('/', (req, res) => {
+    res.send('¡API Backend funcionando exitosamente!');
 });
 
 // ==========================================
@@ -136,7 +165,6 @@ app.delete('/categorias/:id', async (req, res) => {
     }
 });
 
-
 // ==========================================
 // CRUD DE PROVEEDORES
 // ==========================================
@@ -208,11 +236,12 @@ app.delete('/proveedores/:id', async (req, res) => {
     }
 });
 
+// ==========================================
+// CRUD DE PRODUCTOS (RUTAS PROTEGIDAS CON RBAC)
+// ==========================================
 
-
-
-// CREAR PRODUCTO
-app.post('/productos', async (req, res) => {
+// 1. POST: Crear un nuevo producto (Hace funcionar el botón Guardar)
+app.post(['/api/productos', '/productos'], async (req, res) => {
     try {
         const nuevoProducto = await Producto.create(req.body);
         res.status(201).json(nuevoProducto);
@@ -221,60 +250,46 @@ app.post('/productos', async (req, res) => {
     }
 });
 
-// LISTAR PRODUCTOS CON SU CATEGORIA
-app.get('/productos', async (req, res) => {
+// 2. GET: Obtener todos los productos (Hace funcionar la Lista de Productos)
+// Protegido: Solo administradores o almaceneros pueden ver la lista
+app.get(['/api/productos', '/productos'], autenticar(['Administrador', 'Almacenero']), async (req, res) => {
     try {
         const productos = await Producto.findAll({
-    include: [
-        {
-            model: Categoria,
-            as: 'categoria'
-        },
-        {
-            model: Proveedor,
-            as: 'proveedor'
-        }
-    ]
-});
-
+            include: [
+                {
+                    model: Categoria,
+                    as: 'categoria'
+                },
+                {
+                    model: Proveedor,
+                    as: 'proveedor'
+                }
+            ]
+        });
         res.json(productos);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// ACTUALIZAR PRODUCTO
-app.put('/productos/:id', async (req, res) => {
+// 3. PUT: Actualizar un producto existente (Hace funcionar el botón Editar)
+app.put(['/api/productos/:id', '/productos/:id'], autenticar(['Administrador', 'Almacenero']), async (req, res) => {
     try {
-        const [actualizados] = await Producto.update(req.body, {
+        await Producto.update(req.body, {
             where: { id: req.params.id }
         });
-
-        if (actualizados === 0) {
-            return res.status(404).json({
-                message: 'Producto no encontrado'
-            });
-        }
-
         res.json({ message: 'Producto actualizado' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// ELIMINAR PRODUCTO
-app.delete('/productos/:id', async (req, res) => {
+// 4. DELETE: Eliminar un producto (Hace funcionar el botón Eliminar)
+app.delete(['/api/productos/:id', '/productos/:id'], autenticar(['Administrador', 'Almacenero']), async (req, res) => {
     try {
-        const eliminados = await Producto.destroy({
+        await Producto.destroy({
             where: { id: req.params.id }
         });
-
-        if (eliminados === 0) {
-            return res.status(404).json({
-                message: 'Producto no encontrado'
-            });
-        }
-
         res.json({ message: 'Producto eliminado' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -291,7 +306,6 @@ app.get('/usuarios', async (req, res) => {
         const usuarios = await Usuario.findAll({
             attributes: { exclude: ['password'] }
         });
-
         res.json(usuarios);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -308,9 +322,8 @@ app.post('/usuarios', async (req, res) => {
             usuario: {
                 id: usuario.id,
                 nombre: usuario.nombre,
-                correo: usuario.correo,
-                rol: usuario.rol,
-                estado: usuario.estado
+                email: usuario.email,
+                rol: usuario.rol
             }
         });
     } catch (error) {
@@ -411,10 +424,6 @@ app.post('/movimientos', async (req, res) => {
                 throw new Error('Usuario no encontrado');
             }
 
-            if (!usuario.estado) {
-                throw new Error('El usuario se encuentra inactivo');
-            }
-
             let nuevoStock = producto.stock;
             const cantidadMovimiento = Number(cantidad);
 
@@ -489,7 +498,7 @@ app.get('/movimientos', async (req, res) => {
                 {
                     model: Usuario,
                     as: 'usuario',
-                    attributes: ['id', 'nombre', 'correo']
+                    attributes: ['id', 'nombre', 'email']
                 }
             ],
             order: [['fechaHora', 'DESC']]
@@ -504,22 +513,18 @@ app.get('/movimientos', async (req, res) => {
     }
 });
 
-// SINCRONIZAR BASE DE DATOS
-const PORT = process.env.PORT || 3000;
+// SINCRONIZACIÓN Y ARRANQUE
+const PORT = process.env.PORT || 3006;
 
+// force: false evita que se borren los datos cada vez que se reinicia el servidor
+// alter: true asegura que nuevos campos (como hooks y email en Usuario) se sincronicen sin borrar datos
 sequelize.sync({ alter: true })
     .then(() => {
         console.log('Base de datos conectada y sincronizada.');
-
         app.listen(PORT, () => {
-            console.log(
-                `Servidor corriendo en http://localhost:${PORT}`
-            );
+            console.log(`Servidor corriendo en http://localhost:${PORT}`);
         });
     })
     .catch(error => {
-        console.error(
-            'Error al conectar con la base de datos:',
-            error
-        );
+        console.error('Error al conectar con la base de datos:', error);
     });
